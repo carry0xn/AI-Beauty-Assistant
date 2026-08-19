@@ -1,0 +1,69 @@
+import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import * as bcrypt from 'bcryptjs';
+
+import { PrismaService } from '../../prisma/prisma.service';
+import { RegisterRequestDto } from './dto/register-request.dto';
+import { LoginRequestDto } from './dto/login-request.dto';
+
+const SALT_ROUNDS = 10;
+
+@Injectable()
+export class AuthService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly jwtService: JwtService
+  ) {}
+
+  async register(dto: RegisterRequestDto) {
+    const existing = await this.prisma.user.findUnique({
+      where: { email: dto.email }
+    });
+
+    if (existing) {
+      throw new ConflictException('Ya existe una cuenta con ese email');
+    }
+
+    const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
+
+    const user = await this.prisma.user.create({
+      data: {
+        email: dto.email,
+        name: dto.name,
+        passwordHash
+      }
+    });
+
+    return this.buildAuthResponse(user.id, user.email, user.name);
+  }
+
+  async login(dto: LoginRequestDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { email: dto.email }
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('Credenciales inválidas');
+    }
+
+    const valid = await bcrypt.compare(dto.password, user.passwordHash);
+
+    if (!valid) {
+      throw new UnauthorizedException('Credenciales inválidas');
+    }
+
+    return this.buildAuthResponse(user.id, user.email, user.name);
+  }
+
+  private buildAuthResponse(userId: string, email: string, name: string | null) {
+    const accessToken = this.jwtService.sign({ sub: userId, email });
+    return {
+      accessToken,
+      user: {
+        id: userId,
+        email,
+        name
+      }
+    };
+  }
+}

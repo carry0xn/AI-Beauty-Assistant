@@ -1,0 +1,37 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 42 40% 97%;
+  --foreground: 222 39% 11%;
+  --primary: 14 83% 55%;
+  --primary-foreground: 30 40% 98%;
+  --border: 35 28% 86%;
+  --input: 35 28% 86%;
+  --ring: 14 83% 55%;
+}
+
+* {
+  @apply border-border;
+}
+
+body {
+  font-family: var(--font-body), sans-serif;
+  background: radial-gradient(circle at 90% -10%, rgba(252, 197, 122, 0.5), transparent 35%),
+    radial-gradient(circle at -10% 10%, rgba(245, 143, 102, 0.45), transparent 35%),
+    linear-gradient(180deg, #fffdf8 0%, #f8f3eb 100%);
+  color: hsl(var(--foreground));
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-heading), serif;
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(8px);
+}
