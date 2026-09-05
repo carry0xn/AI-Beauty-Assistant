@@ -12,9 +12,6 @@ export class AnalyzeBodyRequestDto {
 
 export class ChatMessageRequestDto {
   @IsString()
-  userId!: string;
-
-  @IsString()
   message!: string;
 }
 

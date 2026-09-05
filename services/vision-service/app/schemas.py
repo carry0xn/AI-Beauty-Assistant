@@ -1,4 +1,4 @@
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, ConfigDict, HttpUrl
 
 
 class AnalyzeImageRequest(BaseModel):
@@ -6,6 +6,8 @@ class AnalyzeImageRequest(BaseModel):
 
 
 class FaceAnalysisResponse(BaseModel):
+  model_config = ConfigDict(extra="allow")
+
   face_shape: str
   skin_tone: str
   dominant_features: list[str]

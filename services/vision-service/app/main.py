@@ -1,4 +1,5 @@
-from fastapi import FastAPI
+import httpx
+from fastapi import FastAPI, HTTPException
 
 from app.schemas import AnalyzeImageRequest, BodyAnalysisResponse, FaceAnalysisResponse
 
@@ -12,10 +13,21 @@ def health() -> dict[str, str]:
 
 @app.post("/analyze/face", response_model=FaceAnalysisResponse)
 def analyze_face(payload: AnalyzeImageRequest) -> FaceAnalysisResponse:
+  from app.analysis.face import analyze_face as run_face_analysis
+
+  try:
+    response = httpx.get(str(payload.image_url), timeout=20.0, follow_redirects=True)
+    response.raise_for_status()
+    result = run_face_analysis(response.content)
+  except (httpx.HTTPError, ValueError) as exc:
+    raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+  face = result["face"]
   return FaceAnalysisResponse(
-    face_shape="unknown",
-    skin_tone="unknown",
-    dominant_features=["stub"],
+    face_shape=face["shape"],
+    skin_tone=face["skin_tone"]["tone"],
+    dominant_features=[face["eye_color"], face["hair_color"]],
+    **result,
   )
 
 

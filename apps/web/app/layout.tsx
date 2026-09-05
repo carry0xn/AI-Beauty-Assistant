@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Fraunces, Space_Grotesk } from 'next/font/google';
+import ChatWidget from '../components/chat-widget';
 import './globals.css';
 
 const headingFont = Fraunces({
@@ -13,14 +14,17 @@ const bodyFont = Space_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: 'Aura | AI Beauty Assistant',
-  description: 'Aura monorepo scaffold'
+  title: 'Aura | Descubrí tu estilo',
+  description: 'Una guía personal para explorar tu rostro, tus colores y tu estilo.'
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
-      <body className={`${headingFont.variable} ${bodyFont.variable}`}>{children}</body>
+    <html lang="es">
+      <body className={`${headingFont.variable} ${bodyFont.variable}`}>
+        {children}
+        <ChatWidget />
+      </body>
     </html>
   );
 }

@@ -15,6 +15,20 @@ from app.config import FACE_LANDMARKER_MODEL, KNOWLEDGE_PDF_DIR
 _landmarker = None
 
 
+def _normalize_lighting(img):
+    """Reduce warm/cool casts and flatten illumination for color sampling."""
+    working = img.astype(np.float32)
+    channel_means = working.reshape(-1, 3).mean(axis=0)
+    target = float(channel_means.mean())
+    working *= target / np.maximum(channel_means, 1.0)
+    balanced = np.clip(working, 0, 255).astype(np.uint8)
+
+    lab = cv2.cvtColor(balanced, cv2.COLOR_BGR2LAB)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    lab[:, :, 0] = clahe.apply(lab[:, :, 0])
+    return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+
+
 def _get_landmarker():
     global _landmarker
     if _landmarker is None:
@@ -32,10 +46,41 @@ def _sample_patch(img, x, y, radius=6):
     h, w = img.shape[:2]
     x0, x1 = max(0, int(x) - radius), min(w, int(x) + radius)
     y0, y1 = max(0, int(y) - radius), min(h, int(y) + radius)
-    patch = img[y0:y1, x0:x1]
+    patch = img[y0:y1, x0:x1].reshape(-1, 3)
     if patch.size == 0:
         return np.array([0, 0, 0], dtype=np.float64)
-    return patch.mean(axis=(0, 1))
+    luminance = patch.mean(axis=1)
+    valid = patch[(luminance >= 20) & (luminance <= 245)]
+    if len(valid) < 3:
+        valid = patch
+    return np.median(valid, axis=0)
+
+
+def _sample_feature(img, points, width, height, radius=6):
+    samples = [
+        _sample_patch(img, point[0] * width, point[1] * height, radius)
+        for point in points
+    ]
+    return np.median(np.asarray(samples), axis=0)
+
+
+def _validate_pose(landmarks):
+    left_eye, right_eye = landmarks[33], landmarks[263]
+    nose = landmarks[1]
+    eye_dx = right_eye.x - left_eye.x
+    eye_dy = right_eye.y - left_eye.y
+    roll = abs(math.degrees(math.atan2(eye_dy, max(abs(eye_dx), 1e-6))))
+    left_distance = abs(nose.x - left_eye.x)
+    right_distance = abs(right_eye.x - nose.x)
+    yaw = abs(left_distance - right_distance) / max(left_distance + right_distance, 1e-6)
+    if roll > 18 or yaw > 0.35:
+        raise ValueError("La foto debe mostrar el rostro más de frente, sin una rotación marcada")
+    return round(max(0.0, 1.0 - max(roll / 18, yaw / 0.35)), 3), round(roll, 2), round(yaw, 3)
+
+
+def _classification_confidence(value, low, high, margin=1.0):
+    distance = min(abs(value - low), abs(value - high))
+    return round(min(0.99, max(0.5, 0.5 + distance / max(margin, 1e-6))), 3)
 
 
 def _bgr_to_lab(bgr):
@@ -73,14 +118,21 @@ def _classify_skin_tone(lab):
 
 def _classify_eye_color(bgr, luminance):
     b, g, r = float(bgr[0]), float(bgr[1]), float(bgr[2])
-    if luminance < 35:
+    if luminance < 55:
         return "dark"
-    if r / max(b, 1e-6) > 1.15:
-        return "brown"
-    if b / max(r, 1e-6) > 1.15:
+
+    pixel = np.uint8([[[int(b), int(g), int(r)]]])
+    hue, saturation, value = cv2.cvtColor(pixel, cv2.COLOR_BGR2HSV)[0][0]
+    if 32 <= hue <= 88 and saturation >= 35:
+        return "green"
+    if 90 <= hue <= 135 and saturation >= 30:
         return "blue"
+    if (hue <= 25 or hue >= 170) and saturation >= 35 and r >= b:
+        return "brown"
     if g >= r and g >= b:
         return "green"
+    if b >= r and b >= g:
+        return "blue"
     return "hazel"
 
 
@@ -171,6 +223,8 @@ def analyze_face(image_bytes: bytes) -> dict:
         raise ValueError("No se detectó ningún rostro en la imagen")
 
     landmarks = result.face_landmarks[0]
+    pose_confidence, pose_roll, pose_yaw = _validate_pose(landmarks)
+    color_img = _normalize_lighting(img)
 
     forehead = _dist(landmarks[70], landmarks[300], width, height)
     cheek = _dist(landmarks[234], landmarks[454], width, height)
@@ -180,22 +234,40 @@ def analyze_face(image_bytes: bytes) -> dict:
     shape, shape_ratios = _classify_face_shape(
         (forehead, cheek, jaw), face_height
     )
+    shape_confidence = round(
+        min(0.99, max(0.5, 0.5 + min(abs(shape_ratios["height_width_ratio"] - 1.32),
+                                      abs(shape_ratios["jaw_cheek_ratio"] - 0.8)) * 2)),
+        3,
+    )
 
-    cheek_a = _sample_patch(img, landmarks[205].x * width, landmarks[205].y * height)
-    cheek_b = _sample_patch(img, landmarks[425].x * width, landmarks[425].y * height)
-    skin_bgr = (cheek_a + cheek_b) / 2.0
+    skin_bgr = _sample_feature(
+        color_img,
+        [(landmarks[index].x, landmarks[index].y) for index in (205, 425, 123, 352)],
+        width,
+        height,
+    )
     skin_lab = _bgr_to_lab(skin_bgr)
     skin_tone, undertone = _classify_skin_tone(skin_lab)
 
-    iris_a = _sample_patch(img, landmarks[468].x * width, landmarks[468].y * height, 3)
-    iris_b = _sample_patch(img, landmarks[473].x * width, landmarks[473].y * height, 3)
-    eye_bgr = (iris_a + iris_b) / 2.0
+    eye_bgr = _sample_feature(
+        color_img,
+        [(landmarks[index].x, landmarks[index].y) for index in (468, 473, 469, 474)],
+        width,
+        height,
+        radius=3,
+    )
     eye_luminance = float(np.mean(eye_bgr))
     eye_color = _classify_eye_color(eye_bgr, eye_luminance)
 
     top_x = int(landmarks[10].x * width)
     top_y = max(0, int(landmarks[10].y * height) - int(height * 0.03))
-    hair_bgr = _sample_patch(img, top_x, top_y, 8)
+    hair_bgr = _sample_feature(
+        color_img,
+        [(landmarks[index].x, landmarks[index].y) for index in (10, 67, 297)],
+        width,
+        height,
+        radius=8,
+    )
     hair_color = _classify_hair_color(hair_bgr)
 
     symmetry_score = _compute_symmetry(landmarks, width, height)
@@ -206,21 +278,32 @@ def analyze_face(image_bytes: bytes) -> dict:
     nose_width = _dist(landmarks[129], landmarks[358], width, height)
     eye_width_left = _dist(landmarks[33], landmarks[133], width, height)
     eye_width_right = _dist(landmarks[362], landmarks[263], width, height)
+    eyebrow_left = _dist(landmarks[70], landmarks[105], width, height)
+    eyebrow_right = _dist(landmarks[300], landmarks[334], width, height)
+    eyelid_left = _dist(landmarks[159], landmarks[145], width, height)
+    eyelid_right = _dist(landmarks[386], landmarks[374], width, height)
 
     return {
         "kind": "face",
         "model": "mediapipe-face-landmarker-v1",
         "face": {
             "shape": shape,
+            "shape_confidence": shape_confidence,
             "shape_ratios": shape_ratios,
             "symmetry_score": symmetry_score,
             "skin_tone": {
                 "tone": skin_tone,
                 "undertone": undertone,
                 "lab": skin_lab,
+                "confidence": _classification_confidence(skin_lab[0], 35, 70, 20),
             },
             "eye_color": eye_color,
+            "eye_color_confidence": round(min(0.99, max(0.5, eye_luminance / 255)), 3),
             "hair_color": hair_color,
+            "hair_color_confidence": round(min(0.99, max(0.5, float(np.mean(hair_bgr)) / 255)), 3),
+            "pose_confidence": pose_confidence,
+            "pose_roll_degrees": pose_roll,
+            "pose_yaw_score": pose_yaw,
             "proportions": {
                 "interpupillary_ratio": round(interpupillary / max(cheek, 1e-6), 3),
                 "mouth_width_ratio": round(mouth_width / max(cheek, 1e-6), 3),
@@ -228,6 +311,10 @@ def analyze_face(image_bytes: bytes) -> dict:
                 "nose_width_ratio": round(nose_width / max(cheek, 1e-6), 3),
                 "eye_width_ratio_left": round(eye_width_left / max(cheek, 1e-6), 3),
                 "eye_width_ratio_right": round(eye_width_right / max(cheek, 1e-6), 3),
+                "eyebrow_width_ratio_left": round(eyebrow_left / max(cheek, 1e-6), 3),
+                "eyebrow_width_ratio_right": round(eyebrow_right / max(cheek, 1e-6), 3),
+                "eyelid_opening_ratio_left": round(eyelid_left / max(eye_width_left, 1e-6), 3),
+                "eyelid_opening_ratio_right": round(eyelid_right / max(eye_width_right, 1e-6), 3),
             },
         },
         **build_face_recommendations(

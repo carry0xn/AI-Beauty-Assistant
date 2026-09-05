@@ -3,10 +3,11 @@ import { Module } from '@nestjs/common';
 
 import { ChatController } from './chat.controller';
 import { ChatService } from './chat.service';
+import { JwtAuthGuard } from './jwt-auth.guard';
 
 @Module({
   imports: [HttpModule],
   controllers: [ChatController],
-  providers: [ChatService]
+  providers: [ChatService, JwtAuthGuard]
 })
 export class ChatModule {}

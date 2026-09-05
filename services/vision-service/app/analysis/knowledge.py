@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from functools import lru_cache
+import hashlib
 from pathlib import Path
 import re
+import math
 
 from pypdf import PdfReader
 
@@ -16,7 +19,7 @@ _SHAPE_TIPS = {
         "Contour diagonal suave desde sien hacia pómulo para mayor estructura."
     ],
     "square": [
-        "Capas y movimiento alrededor de mandíbula para suavizar ángulos.",
+        "Podés probar cortes en capas, con mechones que enmarquen el rostro y movimiento cerca de la mandíbula para suavizar visualmente sus ángulos.",
         "Rubor en trazos circulares y luminosidad central para balancear rasgos."
     ],
     "heart": [
@@ -79,40 +82,62 @@ def _split_sentences(text: str) -> list[str]:
     return [s.strip() for s in raw if len(s.strip()) >= 45]
 
 
-def _best_sentence(text: str, keywords: list[str]) -> str | None:
+def _chunks(text: str, size: int = 3) -> list[str]:
     sentences = _split_sentences(text)
-    best: tuple[int, str] | None = None
-    for sentence in sentences:
-        normalized = _normalize(sentence)
-        score = sum(1 for keyword in keywords if keyword in normalized)
-        if score == 0:
-            continue
-        if best is None or score > best[0]:
-            best = (score, sentence)
-    return best[1] if best else None
+    return [" ".join(sentences[index : index + size]) for index in range(0, len(sentences), size)]
+
+
+def _embedding(text: str, dimensions: int = 256) -> list[float]:
+    """Create a deterministic local embedding from words and character n-grams."""
+    vector = [0.0] * dimensions
+    normalized = _normalize(text)
+    tokens = re.findall(r"[a-záéíóúüñ]+", normalized)
+    features = tokens + [normalized[index : index + 3] for index in range(max(0, len(normalized) - 2))]
+    for feature in features:
+        digest = hashlib.blake2b(feature.encode("utf-8"), digest_size=4).digest()
+        index = int.from_bytes(digest, "big") % dimensions
+        vector[index] += 1.0
+    norm = math.sqrt(sum(value * value for value in vector))
+    return [value / norm for value in vector] if norm else vector
+
+
+def _cosine(left: list[float], right: list[float]) -> float:
+    return sum(a * b for a, b in zip(left, right))
+
+
+@lru_cache(maxsize=64)
+def _pdf_chunks(path: str, modified_ns: int) -> tuple[str, ...]:
+    del modified_ns
+    return tuple(_chunks(_pdf_text(Path(path))))
 
 
 def _extract_evidence(knowledge_dir: Path, shape: str, undertone: str) -> list[str]:
-    evidences: list[str] = []
+    scored_chunks: list[tuple[float, str, str]] = []
     if not knowledge_dir.exists():
-        return evidences
+        return []
 
     keywords = _SHAPE_KEYWORDS.get(shape, []) + _UNDERTONE_KEYWORDS.get(undertone, [])
     if not keywords:
-        return evidences
+        return []
+
+    query = _embedding(" ".join(keywords))
 
     for pdf_path in sorted(knowledge_dir.glob("*.pdf")):
         try:
-            text = _pdf_text(pdf_path)
+            chunks = _pdf_chunks(str(pdf_path), pdf_path.stat().st_mtime_ns)
         except Exception:
             continue
 
-        sentence = _best_sentence(text, keywords)
-        if sentence:
-            evidences.append(f"{pdf_path.name}: {sentence[:240]}")
+        for chunk in chunks:
+            score = _cosine(query, _embedding(chunk))
+            if score > 0:
+                scored_chunks.append((score, pdf_path.name, chunk))
 
-        if len(evidences) >= 4:
-            break
+    scored_chunks.sort(reverse=True)
+    return [
+        f"{source} ({score:.2f}): {chunk[:240]}"
+        for score, source, chunk in scored_chunks[:4]
+    ]
 
     return evidences
 

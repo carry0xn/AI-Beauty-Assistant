@@ -31,10 +31,22 @@ interface AuthedRequest extends Request {
 export class AnalysesController {
   constructor(private readonly analysesService: AnalysesService) {}
 
+  @Get()
+  @UseGuards(JwtAuthGuard)
+  findAll(@Req() req: AuthedRequest) {
+    return this.analysesService.findAll(req.user.userId);
+  }
+
   @Post()
   @UseGuards(JwtAuthGuard)
   create(@Req() req: AuthedRequest, @Body() dto: CreateAnalysisRequestDto) {
     return this.analysesService.create(req.user.userId, dto.kind, dto.imageKey);
+  }
+
+  @Get('latest-result')
+  @UseGuards(JwtAuthGuard)
+  latestResult(@Req() req: AuthedRequest) {
+    return this.analysesService.findLatestFaceResult(req.user.userId);
   }
 
   @Get(':id')

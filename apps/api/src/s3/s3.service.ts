@@ -6,7 +6,7 @@ import {
   PutBucketCorsCommand
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { PutObjectCommand } from '@aws-sdk/client-s3';
+import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 
 @Injectable()
 export class S3Service implements OnModuleInit {
@@ -69,6 +69,14 @@ export class S3Service implements OnModuleInit {
       Bucket: this.bucket,
       Key: key,
       ContentType: contentType
+    });
+    return getSignedUrl(this.client, command, { expiresIn: 60 * 10 });
+  }
+
+  async presignGet(key: string): Promise<string> {
+    const command = new GetObjectCommand({
+      Bucket: this.bucket,
+      Key: key
     });
     return getSignedUrl(this.client, command, { expiresIn: 60 * 10 });
   }

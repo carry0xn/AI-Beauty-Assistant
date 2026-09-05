@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 import { API_URL, authedFetch, getStoredUser } from '../../lib/auth';
@@ -125,8 +126,6 @@ export default function AnalyzePage() {
 
   const face = analysis?.resultJson?.face;
   const recommendations = analysis?.resultJson?.recommendations;
-  const sources = analysis?.resultJson?.knowledge_sources ?? [];
-
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-6 px-6 py-10">
       <div className="flex items-center justify-between">
@@ -253,31 +252,14 @@ export default function AnalyzePage() {
               </div>
             </div>
 
-            {(recommendations?.evidence?.length ?? 0) > 0 && (
-              <div className="mt-4 rounded-md bg-slate-50 p-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  Extractos relevantes de tu base documental
-                </p>
-                <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-slate-600">
-                  {(recommendations?.evidence ?? []).map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {sources.length > 0 && (
-              <div className="mt-4 border-t border-slate-200 pt-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  Fuentes documentales detectadas
-                </p>
-                <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-slate-500">
-                  {sources.map((source) => (
-                    <li key={source}>{source}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            <div className="mt-5 border-t border-slate-200 pt-4">
+              <Link
+                href="/saber-mas"
+                className="text-sm font-medium text-orange-700 underline decoration-orange-300 underline-offset-4 hover:text-orange-800"
+              >
+                Saber más sobre estas recomendaciones
+              </Link>
+            </div>
           </section>
         </>
       )}
